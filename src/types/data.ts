@@ -79,7 +79,7 @@ export interface Equip {
 }
 
 export interface CpInfo {
-  /** the two hero ids that must fight together (共战) */
+  /** the two hero ids that must be on the field together */
   heroes: [number, number]
   /** true when the talent also grants both hero cards */
   grantsCards: boolean
@@ -97,7 +97,14 @@ export interface Talent {
   stageNo: number
   /** e.g. 初始天赋 / 天赋包一 */
   pack: string
-  /** set when this is a CP (共战) talent */
+  /**
+   * Heroes the official data links to this talent (e.g. 技能突破：亚瑟 → 亚瑟).
+   * 1-2 heroes: the talent is about those heroes; 3+: examples of a hero trait (any one counts).
+   */
+  heroes: number[]
+  /** true when the talent gives you the cards of all linked heroes */
+  grantsHeroes: boolean
+  /** set when this is a pair talent (two heroes on the field together) */
   cp?: CpInfo
   /** set when this is a player's exclusive talent */
   lordId?: number

@@ -309,11 +309,17 @@ function normEquip(c: RawCard): Equip {
   }
 }
 
-function detectCp(c: RawCard, desc: string, heroIds: Set<number>, heroIdByName: Map<string, number>): CpInfo | undefined {
+/** Heroes the official data links to a card: its preview cards that are heroes. */
+function linkedHeroes(c: RawCard, heroIds: { has(id: number): boolean }): number[] {
+  return [...new Set((c.previewCardIDs ?? []).filter((id) => heroIds.has(id)))]
+}
+
+/** A pair talent: officially linked to exactly 2 heroes (e.g. 帝临), or one that mentions "共战". */
+function detectCp(c: RawCard, desc: string, linked: number[], heroIdByName: Map<string, number>): CpInfo | undefined {
   const text = plainText(desc)
   const at = text.indexOf('共战')
-  if (at < 0) return undefined
-  let ids = (c.previewCardIDs ?? []).filter((id) => heroIds.has(id))
+  if (linked.length !== 2 && at < 0) return undefined
+  let ids = linked
   if (ids.length !== 2) {
     // Fall back to matching hero names that appear before "共战"
     const head = text.slice(0, at)
@@ -336,8 +342,12 @@ function detectCp(c: RawCard, desc: string, heroIds: Set<number>, heroIdByName: 
   return { heroes: [ids[0], ids[1]], grantsCards: /获得1张.+?和1张/.test(text) }
 }
 
-function normTalent(c: RawCard, heroIds: Set<number>, heroIdByName: Map<string, number>, lordByTalent: Map<number, number>): Talent {
+function normTalent(c: RawCard, heroById: Map<number, Hero>, heroIdByName: Map<string, number>, lordByTalent: Map<number, number>): Talent {
   const desc = richText(c.desc)
+  const linked = linkedHeroes(c, heroById)
+  const cp = detectCp(c, desc, linked, heroIdByName)
+  const heroes = linked.length ? linked : cp ? [...cp.heroes] : []
+  const text = plainText(desc)
   const t: Talent = {
     id: c.id,
     name: c.name,
@@ -347,8 +357,10 @@ function normTalent(c: RawCard, heroIds: Set<number>, heroIdByName: Map<string, 
     stage: c.talentStageDesc ?? '',
     stageNo: toNum(c.talentStageType),
     pack: c.talentCard?.grpName ?? '',
+    heroes,
+    // e.g. "获得1张亚瑟" / "获得3能量以及1张李信"
+    grantsHeroes: heroes.length > 0 && heroes.every((id) => text.includes(`1张${heroById.get(id)?.name ?? ''}`)),
   }
-  const cp = detectCp(c, desc, heroIds, heroIdByName)
   if (cp) t.cp = cp
   const lordId = lordByTalent.get(c.id)
   if (lordId !== undefined) t.lordId = lordId
@@ -496,7 +508,7 @@ async function main() {
   const lords = rawLords.map(normLord)
   const lordByTalent = new Map<number, number>()
   for (const l of lords) if (l.exclusive) lordByTalent.set(l.exclusive.id, l.id)
-  const talents = rawTalents.map((c) => normTalent(c, heroIds, heroIdByName, lordByTalent))
+  const talents = rawTalents.map((c) => normTalent(c, heroById, heroIdByName, lordByTalent))
 
   console.log('Fetching lineups...')
   const lineupMap = new Map<string, Lineup>()

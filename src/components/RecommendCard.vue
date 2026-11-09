@@ -63,6 +63,7 @@ function onFavorite() {
           <h3 class="leading-snug font-semibold">{{ lineup.name }}</h3>
           <div class="mt-1 flex flex-wrap gap-1">
             <Badge v-if="rec.lordMatch" color="var(--q2)">棋手一致</Badge>
+            <Badge v-for="t in rec.talentMatch" :key="t.id" color="var(--t-gold)">契合「{{ t.name }}」</Badge>
             <Badge v-for="c in rec.campMatch" :key="c" :color="campColor(c)">{{ c }}</Badge>
             <Badge v-if="ownership" color="var(--accent)">已有 {{ rec.owned.length }}/{{ lineup.heroes.length }}</Badge>
             <Badge v-if="ownedCarries.length" :color="CORE_META[1].color">已有主C {{ ownedCarries.join('、') }}</Badge>

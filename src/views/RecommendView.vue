@@ -6,6 +6,7 @@ import HeroAvatar from '@/components/HeroAvatar.vue'
 import HeroPicker from '@/components/HeroPicker.vue'
 import NavIcon from '@/components/NavIcon.vue'
 import RecommendCard from '@/components/RecommendCard.vue'
+import TalentPicker from '@/components/TalentPicker.vue'
 import { useIncremental } from '@/composables/useIncremental'
 import { usePersistentRef } from '@/composables/usePersistentRef'
 import { campColor } from '@/data/display'
@@ -16,15 +17,17 @@ import { CAMPS } from '@/types/data'
 defineOptions({ name: 'RecommendView' })
 
 const db = useDb()
-const empty = (): RecommendInput => ({ lord: 0, camps: [], heroes: [] })
+const empty = (): RecommendInput => ({ lord: 0, camps: [], heroes: [], talents: [] })
 const stored = usePersistentRef('recommend:input', empty())
 const pickerOpen = ref(false)
+const talentPickerOpen = ref(false)
 
 // Ignore ids that disappeared after a data update.
 const input = computed<RecommendInput>(() => ({
   lord: db.lordById.has(stored.value.lord) ? stored.value.lord : 0,
   camps: stored.value.camps.filter((c) => (CAMPS as readonly string[]).includes(c)),
   heroes: stored.value.heroes.filter((id) => db.heroById.has(id)),
+  talents: stored.value.talents.filter((id) => (db.talentById.get(id)?.heroes.length ?? 0) > 0),
 }))
 const active = computed(() => hasInput(input.value))
 
@@ -36,6 +39,7 @@ const campOptions = CAMPS.filter((c) => c !== '无阵营').map((c) => ({ value: 
 
 const pickLord = (id: number) => (stored.value.lord = stored.value.lord === id ? 0 : id)
 const removeHero = (id: number) => (stored.value.heroes = stored.value.heroes.filter((x) => x !== id))
+const removeTalent = (id: number) => (stored.value.talents = stored.value.talents.filter((x) => x !== id))
 const clearAll = () => (stored.value = empty())
 
 const results = computed(() => recommend(db, input.value))
@@ -63,7 +67,7 @@ onMounted(() => {
     >
       <div>
         <h2 class="font-semibold">智能推荐</h2>
-        <p class="mt-0.5 text-[13px] leading-relaxed text-muted">选你的棋手、想玩的阵营和手上已有的英雄，按匹配度推荐官方阵容。每项都可以不填。</p>
+        <p class="mt-0.5 text-[13px] leading-relaxed text-muted">选你的棋手、想玩的阵营、手上已有的英雄和拿到的英雄天赋，按匹配度推荐官方阵容。每项都可以不填。</p>
       </div>
 
       <div class="flex items-start gap-2" role="group" aria-label="我的棋手">
@@ -116,6 +120,31 @@ onMounted(() => {
         </div>
       </div>
 
+      <div class="flex items-start gap-2">
+        <span class="mt-2 w-11 shrink-0 text-xs text-faint">天赋</span>
+        <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          <button
+            v-for="id in input.talents"
+            :key="id"
+            type="button"
+            class="inline-flex h-8 items-center gap-1.5 rounded-full border border-accent bg-surface-2 pr-2.5 pl-1 text-[13px]"
+            :aria-label="`移除天赋 ${db.talentById.get(id)?.name ?? ''}`"
+            @click="removeTalent(id)"
+          >
+            <CardIcon :src="db.talentById.get(id)?.icon ?? ''" :name="db.talentById.get(id)?.name ?? '?'" :size="22" round />
+            {{ db.talentById.get(id)?.name }}
+            <NavIcon name="close" :size="12" class="text-faint" />
+          </button>
+          <button
+            type="button"
+            class="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-dashed border-line px-3 text-[13px] text-muted hover:border-accent hover:text-text"
+            @click="talentPickerOpen = true"
+          >
+            <NavIcon name="plus" :size="14" />{{ input.talents.length ? '修改' : '英雄相关天赋' }}
+          </button>
+        </div>
+      </div>
+
       <div v-if="active" class="flex justify-end">
         <button type="button" class="px-1 text-xs text-accent" @click="clearAll">清空条件</button>
       </div>
@@ -124,16 +153,17 @@ onMounted(() => {
     <section aria-label="推荐结果">
       <div v-if="!active" class="rounded-2xl border border-dashed border-line p-6 text-center text-sm text-muted">
         <p class="font-medium text-text">先选一个条件试试</p>
-        <p class="mt-1 leading-relaxed">只选棋手，会按热度列出适合这个棋手的阵容；再加上已有英雄，会优先推荐你凑得齐的。</p>
+        <p class="mt-1 leading-relaxed">只选棋手，会按热度列出适合这个棋手的阵容；选了「技能突破：亚瑟」这类天赋，会找有对应英雄的阵容；再加上已有英雄，会优先推荐你凑得齐的。</p>
       </div>
       <template v-else>
         <p class="mb-2 text-xs text-faint">为你找到 {{ results.length }} 套阵容</p>
         <details class="mb-3 rounded-xl bg-surface-2 px-3 py-2 text-[13px] text-muted">
           <summary class="cursor-pointer text-text">匹配度怎么算？</summary>
           <p class="mt-1.5 leading-relaxed">
-            只计算你填了的条件：已有英雄占 {{ MATCH_WEIGHTS.heroes }}%（按位置加权，主C ×3、坦克和功能 ×2、其他 ×1），推荐棋手一致占
-            {{ MATCH_WEIGHTS.lord }}%，属于想玩的阵营占 {{ MATCH_WEIGHTS.camps }}%。匹配度相同时按使用人数排序。阵容里有一对 CP 英雄时，会提示对应的
-            CP 天赋。
+            只计算你填了的条件，按以下分值折算成百分比：已有英雄 {{ MATCH_WEIGHTS.heroes }} 分（按位置加权，主C ×3、坦克和功能 ×2、其他
+            ×1）；天赋契合 {{ MATCH_WEIGHTS.talents }} 分（阵容里有天赋对应的英雄；对应 3 名英雄的天赋有其中任一名即可）；推荐棋手一致
+            {{ MATCH_WEIGHTS.lord }} 分；属于想玩的阵营 {{ MATCH_WEIGHTS.camps }} 分。天赋会送的英雄牌（如「获得1张亚瑟」）算作你已有。匹配度相同时按使用人数排序。阵容里有一对
+            CP 英雄时，会提示对应的 CP 天赋。
           </p>
         </details>
         <ul v-if="results.length" class="grid gap-3 2xl:grid-cols-2">
@@ -148,5 +178,6 @@ onMounted(() => {
     </section>
 
     <HeroPicker v-model:open="pickerOpen" v-model:selected="stored.heroes" title="我已有的英雄" />
+    <TalentPicker v-model:open="talentPickerOpen" v-model:selected="stored.talents" title="英雄相关天赋" />
   </div>
 </template>
