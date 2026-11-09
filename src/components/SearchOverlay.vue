@@ -36,6 +36,14 @@ watch(open, async (v) => {
 
 watch(query, () => (active.value = 0))
 
+// Huya's lineups arrive after start-up: rebuild an index that was built without them.
+watch(
+  () => db.lineups,
+  async () => {
+    if (index.value) index.value = await buildIndex(db)
+  },
+)
+
 function choose(e: SearchEntry) {
   open.value = false
   if (e.kind === 'lineup') {

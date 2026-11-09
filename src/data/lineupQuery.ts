@@ -2,7 +2,11 @@
 import type { Lineup, LineupSource } from '@/types/data'
 import type { Db } from './store'
 
+/** The official lists. Huya lineups are not counted in the codex links. */
 export const LINEUP_SOURCES: readonly LineupSource[] = ['recommend', 'hot', 'beginner']
+
+/** In at least one official list (Huya-only lineups are not). */
+export const isOfficial = (l: Lineup) => l.sources.some((s) => LINEUP_SOURCES.includes(s))
 
 export interface LineupQuery {
   heroes?: readonly number[]

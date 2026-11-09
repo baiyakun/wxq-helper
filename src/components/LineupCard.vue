@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import { isFavorite, toggleFavorite } from '@/composables/favorites'
 import { showToast } from '@/composables/toast'
 import { campColor } from '@/data/display'
-import { formatWan } from '@/data/format'
+import { formatPercent, formatWan } from '@/data/format'
+import { isOfficial } from '@/data/lineupQuery'
 import { useDb } from '@/data/store'
 import type { Lineup } from '@/types/data'
 import Badge from './Badge.vue'
@@ -19,6 +20,7 @@ const CORE_ORDER = [9, 0, 1, 2]
 const heroes = computed(() => [...props.lineup.heroes].sort((a, b) => (CORE_ORDER[a.core] ?? 9) - (CORE_ORDER[b.core] ?? 9)))
 const lords = computed(() => props.lineup.lords.map((id) => db.lordById.get(id)).filter((l) => l !== undefined))
 const fav = computed(() => isFavorite(props.lineup.key))
+const huya = computed(() => !isOfficial(props.lineup))
 
 function onFavorite() {
   showToast(toggleFavorite(props.lineup) ? '已收藏，可在「我的」中查看' : '已取消收藏')
@@ -34,9 +36,11 @@ function onFavorite() {
         <span v-if="rank" class="mt-px min-w-7 shrink-0 text-sm font-semibold text-faint tabular-nums">#{{ rank }}</span>
         <div class="min-w-0">
           <h3 class="leading-snug font-semibold">{{ lineup.name }}</h3>
-          <div v-if="isNew || removed || lineup.tags.length" class="mt-1 flex flex-wrap gap-1">
+          <div v-if="isNew || removed || huya || lineup.stats || lineup.tags.length" class="mt-1 flex flex-wrap gap-1">
             <Badge v-if="removed" color="var(--q6)">已下架</Badge>
             <Badge v-if="isNew" color="var(--q2)">新上榜</Badge>
+            <Badge v-if="huya" color="var(--q3)">虎牙收录</Badge>
+            <Badge v-if="lineup.stats" color="var(--q5)">登顶 {{ formatPercent(lineup.stats.top1) }} · 前三 {{ formatPercent(lineup.stats.top3) }}</Badge>
             <Badge v-for="t in lineup.tags" :key="t" color="var(--accent)">{{ t }}</Badge>
           </div>
         </div>

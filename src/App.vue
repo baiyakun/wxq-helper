@@ -12,10 +12,11 @@ import { initData, useDataStatus, useDb } from '@/data/store'
 
 const route = useRoute()
 const router = useRouter()
-const { status, error } = useDataStatus()
+const { status, error, huyaStatus } = useDataStatus()
 
-// Keep favorite snapshots fresh so removed lineups still show their last known content.
-watch(status, (s) => s === 'ready' && refreshFavoriteSnapshots(useDb()))
+// Keep favorite snapshots fresh so removed lineups still show their last known content
+// (again once Huya's lineups have loaded).
+watch([status, huyaStatus], ([s]) => s === 'ready' && refreshFavoriteSnapshots(useDb()))
 
 function goBack() {
   // history.state.back is set by vue-router when there is an in-app previous entry

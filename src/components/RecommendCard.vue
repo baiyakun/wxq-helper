@@ -5,7 +5,8 @@ import { isFavorite, toggleFavorite } from '@/composables/favorites'
 import { showToast } from '@/composables/toast'
 import { useDetail } from '@/composables/useDetail'
 import { campColor } from '@/data/display'
-import { formatWan } from '@/data/format'
+import { formatPercent, formatWan } from '@/data/format'
+import { isOfficial } from '@/data/lineupQuery'
 import type { CpHint, Recommendation } from '@/data/recommend'
 import { useDb } from '@/data/store'
 import type { CoreRole } from '@/types/data'
@@ -34,6 +35,7 @@ const missingText = computed(() =>
 const lords = computed(() => lineup.value.lords.map((id) => db.lordById.get(id)).filter((l) => l !== undefined))
 const matchClass = computed(() => (props.rec.match >= 70 ? 'text-accent' : props.rec.match >= 40 ? 'text-text' : 'text-muted'))
 const fav = computed(() => isFavorite(lineup.value.key))
+const huya = computed(() => !isOfficial(lineup.value))
 
 function cpNote(c: CpHint) {
   const giver = c.group.talents.find((t) => t.cp?.grantsCards)
@@ -67,6 +69,8 @@ function onFavorite() {
             <Badge v-for="c in rec.campMatch" :key="c" :color="campColor(c)">{{ c }}</Badge>
             <Badge v-if="ownership" color="var(--accent)">已有 {{ rec.owned.length }}/{{ lineup.heroes.length }}</Badge>
             <Badge v-if="ownedCarries.length" :color="CORE_META[1].color">已有主C {{ ownedCarries.join('、') }}</Badge>
+            <Badge v-if="huya" color="var(--q3)">虎牙收录</Badge>
+            <Badge v-if="lineup.stats" color="var(--q5)">登顶 {{ formatPercent(lineup.stats.top1) }}</Badge>
           </div>
         </div>
       </div>

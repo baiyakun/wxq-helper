@@ -15,8 +15,9 @@ import { findLineup, isFavorite, toggleFavorite } from '@/composables/favorites'
 import { showToast } from '@/composables/toast'
 import { useDetail } from '@/composables/useDetail'
 import { campColor } from '@/data/display'
-import { formatMonthDay, formatWan } from '@/data/format'
-import { useDb } from '@/data/store'
+import { formatMonthDay, formatPercent, formatWan } from '@/data/format'
+import { isOfficial } from '@/data/lineupQuery'
+import { lineupsComplete, useDb } from '@/data/store'
 import type { LineupHero } from '@/types/data'
 
 const route = useRoute()
@@ -27,6 +28,17 @@ const key = computed(() => String(route.params.key ?? ''))
 const found = computed(() => findLineup(db, key.value))
 const lineup = computed(() => found.value?.lineup)
 const fav = computed(() => (lineup.value ? isFavorite(lineup.value.key) : false))
+const huya = computed(() => !!lineup.value && !isOfficial(lineup.value))
+const stats = computed(() => {
+  const s = lineup.value?.stats
+  if (!s) return []
+  return [
+    { k: '对局', v: `${formatWan(s.matches)}场` },
+    { k: '平均名次', v: s.avgPlace.toFixed(2) },
+    { k: '登顶率', v: formatPercent(s.top1) },
+    { k: '前三率', v: formatPercent(s.top3) },
+  ]
+})
 
 const COLS = 7
 const ROWS = [3, 2, 1, 0] // z = 3 is the front row, drawn at the top
@@ -67,6 +79,7 @@ function onFavorite() {
     <header>
       <h2 class="text-xl leading-snug font-semibold">{{ lineup.name }}</h2>
       <div class="mt-1.5 flex flex-wrap gap-1.5">
+        <Badge v-if="huya" color="var(--q3)">虎牙收录</Badge>
         <Badge v-for="c in lineup.camps" :key="c" :color="campColor(c)">{{ c }}</Badge>
         <Badge v-for="t in lineup.tags" :key="t" color="var(--accent)">{{ t }}</Badge>
       </div>
@@ -76,6 +89,9 @@ function onFavorite() {
         <span v-if="lineup.scoreNum"> · 评分 {{ lineup.score.toFixed(1) }}（{{ lineup.scoreNum }}人）</span>
         <span v-if="lineup.likes"> · {{ lineup.likes }}赞</span>
         <span v-if="lineup.createdAt"> · {{ formatMonthDay(lineup.createdAt) }}发布</span>
+      </p>
+      <p v-if="huya" class="mt-1 text-[12px] leading-relaxed text-faint">
+        来自虎牙万象棋助手的收录，当前不在官方榜单中，强度可能随版本调整变化；使用人数是收录时的数字。
       </p>
       <div class="mt-3 flex gap-2">
         <button type="button" class="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-accent px-4 font-medium text-accent-ink" @click="copyCode">
@@ -93,6 +109,16 @@ function onFavorite() {
         </button>
       </div>
     </header>
+
+    <DetailSection v-if="stats.length" title="实战数据">
+      <ul class="grid grid-cols-4 gap-2 text-center">
+        <li v-for="s in stats" :key="s.k" class="rounded-xl bg-surface-2 py-2">
+          <div class="font-semibold tabular-nums">{{ s.v }}</div>
+          <div class="text-[11px] text-faint">{{ s.k }}</div>
+        </li>
+      </ul>
+      <p class="mt-2 text-[12px] leading-relaxed text-faint">虎牙万象棋助手统计，按核心英雄相同的同类阵容汇总，不只是这一套。</p>
+    </DetailSection>
 
     <!-- Board -->
     <DetailSection title="站位">
@@ -184,6 +210,8 @@ function onFavorite() {
       <p v-if="lineup.effectDesc" class="mt-2 text-[14px] leading-relaxed text-muted"><RichText :text="lineup.effectDesc" /></p>
     </DetailSection>
   </div>
+
+  <div v-else-if="!lineupsComplete()" class="mx-auto mt-16 max-w-sm text-center text-muted" aria-busy="true">正在加载虎牙收录的阵容…</div>
 
   <div v-else class="mx-auto mt-16 max-w-sm text-center">
     <p class="font-medium">没有找到这套阵容</p>

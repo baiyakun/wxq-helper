@@ -15,7 +15,7 @@ import { campColor } from '@/data/display'
 import { formatDateTime } from '@/data/format'
 import { bestSource, hasAllHeroes, hasAllTalents, parseIdList } from '@/data/lineupQuery'
 import { nameMatches } from '@/data/search'
-import { useDb } from '@/data/store'
+import { loadHuya, useDataStatus, useDb } from '@/data/store'
 import { CAMPS, type Lineup, type LineupSource } from '@/types/data'
 
 defineOptions({ name: 'LineupsView' })
@@ -24,11 +24,13 @@ const db = useDb()
 const route = useRoute()
 const router = useRouter()
 const news = useLineupNews(db)
+const { huyaStatus } = useDataStatus()
 
 const SOURCES: { key: LineupSource; label: string }[] = [
-  { key: 'recommend', label: '推荐' },
-  { key: 'hot', label: '热门' },
-  { key: 'beginner', label: '新手' },
+  { key: 'recommend', label: '推荐榜' },
+  { key: 'hot', label: '热门榜' },
+  { key: 'beginner', label: '新手榜' },
+  { key: 'huya', label: '虎牙收录' },
 ]
 type SortKey = 'official' | 'uses' | 'score' | 'new'
 const SORTS: { value: SortKey; label: string }[] = [
@@ -44,6 +46,8 @@ const source = computed<LineupSource>({
   get: () => (SOURCES.some((s) => s.key === storedSource.value) ? (storedSource.value as LineupSource) : 'recommend'),
   set: (v) => (storedSource.value = v),
 })
+// Huya's own order (roughly newest first) takes the "official order" slot on its tab.
+const sorts = computed(() => (source.value === 'huya' ? SORTS.map((s) => (s.value === 'official' ? { ...s, label: '虎牙排序' } : s)) : SORTS))
 const storedSort = usePersistentRef<string>('lineups:sort', 'official')
 const sort = computed<SortKey>({
   get: () => (SORTS.some((s) => s.value === storedSort.value) ? (storedSort.value as SortKey) : 'official'),
@@ -97,7 +101,7 @@ const matches = (l: Lineup) =>
 
 // Tab counts follow the current filters, so matches in the other lists stay discoverable.
 const sourceCounts = computed(() => {
-  const counts: Record<LineupSource, number> = { recommend: 0, hot: 0, beginner: 0 }
+  const counts: Record<LineupSource, number> = { recommend: 0, hot: 0, beginner: 0, huya: 0 }
   for (const l of db.lineups) if (matches(l)) for (const s of l.sources) counts[s]++
   return counts
 })
@@ -183,19 +187,19 @@ watch(
 <template>
   <div>
     <nav class="sticky top-12 z-20 -mx-4 mb-3 border-b border-line bg-bg/95 px-4 backdrop-blur lg:top-0 lg:-mx-8 lg:px-8" aria-label="阵容榜单">
-      <div class="flex gap-1">
+      <div class="no-scrollbar flex overflow-x-auto sm:gap-1">
         <button
           v-for="s in SOURCES"
           :key="s.key"
           type="button"
-          class="relative flex h-11 items-center gap-1 px-3 text-[15px] transition-colors"
+          class="relative flex h-11 shrink-0 items-center gap-1 px-2 text-[15px] transition-colors sm:px-3"
           :class="source === s.key ? 'font-semibold text-text' : 'text-muted hover:text-text'"
           :aria-pressed="source === s.key"
           @click="source = s.key"
         >
-          {{ s.label }}榜
-          <span class="text-xs text-faint tabular-nums">{{ sourceCounts[s.key] }}</span>
-          <span v-if="source === s.key" class="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-accent" aria-hidden="true" />
+          {{ s.label }}
+          <span class="text-xs text-faint tabular-nums">{{ s.key !== 'huya' || huyaStatus === 'ready' ? sourceCounts[s.key] : huyaStatus === 'loading' ? '…' : '–' }}</span>
+          <span v-if="source === s.key" class="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent sm:inset-x-3" aria-hidden="true" />
         </button>
       </div>
     </nav>
@@ -203,6 +207,10 @@ watch(
     <p v-if="news.since && (news.added.size || news.removed)" class="mb-3 rounded-xl bg-surface-2 px-3 py-2 text-[13px] text-muted">
       自上次访问（{{ formatDateTime(news.since) }}）官方阵容：
       <b class="text-text">新增 {{ news.added.size }} 套</b> · 下架 {{ news.removed }} 套
+    </p>
+
+    <p v-if="source === 'huya'" class="mb-3 rounded-xl bg-surface-2 px-3 py-2 text-[13px] leading-relaxed text-muted">
+      虎牙万象棋助手收录、但当前官方榜单里没有的阵容，大多是已下榜的官方旧阵容，强度可能随版本调整变化；使用人数是收录时的数字。
     </p>
 
     <CodexToolbar v-model:query="q" :count="list.length" unit="套阵容" placeholder="搜索阵容名" :filtered="filtered" @reset="reset">
@@ -267,7 +275,7 @@ watch(
         <ChipGroup v-model="f.camps" label="阵营" :options="campOptions" />
         <ChipGroup v-if="tagOptions.length" v-model="f.tags" label="标签" :options="tagOptions" />
       </div>
-      <SortChips v-model="sort" label="排序" :options="SORTS" />
+      <SortChips v-model="sort" label="排序" :options="sorts" />
     </CodexToolbar>
 
     <ul v-if="list.length" class="grid gap-3 lg:grid-cols-2">
@@ -275,6 +283,11 @@ watch(
         <LineupCard :lineup="l" :is-new="news.added.has(l.key)" :rank="sort === 'official' ? l.rank[source] : undefined" />
       </li>
     </ul>
+    <div v-else-if="source === 'huya' && huyaStatus === 'loading'" class="py-16 text-center text-muted" aria-busy="true">正在加载虎牙收录的阵容…</div>
+    <div v-else-if="source === 'huya' && huyaStatus === 'error'" class="py-16 text-center" role="alert">
+      <p class="text-muted">虎牙收录的阵容加载失败</p>
+      <button type="button" class="mt-3 text-sm text-accent" @click="loadHuya">重试</button>
+    </div>
     <div v-else class="py-16 text-center">
       <p class="text-muted">没有符合条件的阵容</p>
       <button v-if="filtered" type="button" class="mt-3 text-sm text-accent" @click="reset">清除筛选</button>

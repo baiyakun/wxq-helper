@@ -1,5 +1,5 @@
 import { computed } from 'vue'
-import type { Db } from '@/data/store'
+import { lineupsComplete, type Db } from '@/data/store'
 import type { Lineup } from '@/types/data'
 import { usePersistentRef } from './usePersistentRef'
 
@@ -15,7 +15,7 @@ interface FavoriteEntry {
 
 export interface ResolvedLineup {
   lineup: Lineup
-  /** true when the lineup is no longer in the official lists */
+  /** true when the lineup is no longer in the official lists or Huya's library */
   removed: boolean
 }
 
@@ -57,7 +57,8 @@ export function refreshFavoriteSnapshots(db: Db): void {
 export function listFavorites(db: Db): (ResolvedLineup & { savedAt: number })[] {
   return favorites.value.map((f) => {
     const fresh = db.lineupByKey.get(f.key)
-    return { lineup: fresh ?? f.snapshot, removed: !fresh, savedAt: f.savedAt }
+    // Not "removed" yet while Huya's lineups are still loading.
+    return { lineup: fresh ?? f.snapshot, removed: !fresh && lineupsComplete(), savedAt: f.savedAt }
   })
 }
 
@@ -66,5 +67,5 @@ export function findLineup(db: Db, key: string): ResolvedLineup | null {
   const fresh = db.lineupByKey.get(key)
   if (fresh) return { lineup: fresh, removed: false }
   const fav = favorites.value.find((f) => f.key === key)
-  return fav ? { lineup: fav.snapshot, removed: true } : null
+  return fav ? { lineup: fav.snapshot, removed: lineupsComplete() } : null
 }

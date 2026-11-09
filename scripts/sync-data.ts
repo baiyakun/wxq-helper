@@ -8,6 +8,8 @@
  *   cards:   589094_oscard_new_{bit}.js   bit: 1 hero, 2 effect, 4 equip, 8 talent, 16 lord
  *   lineups: 598252_oslineupbyrecommend_pro_{page}.js, 600264_oslineupbyhot_pro_{page}.js,
  *            600269_oslineupbybeginner_pro_{page}.js
+ * Plus, optionally, the lineup library of Huya's 万象棋助手 (see ./huya.ts); lineups that are
+ * not in the official lists go to lineups-huya.json. A Huya failure never blocks the sync.
  */
 import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -22,17 +24,20 @@ import type {
   Hero,
   Keyword,
   Lineup,
-  LineupSource,
+  LineupHero,
+  LineupStats,
   Lord,
   MiniCard,
   LordSlot,
+  OfficialSource,
   Talent,
 } from '../src/types/data.ts'
 import { CAMPS, DATA_FILES } from '../src/types/data.ts'
+import { fetchHuya, type RawHuyaHeroRef, type RawHuyaLineup, type RawHuyaStat } from './huya.ts'
 
 const CDN = 'https://game.gtimg.cn/images/amside/ide_timer/'
 const CARD_URL = (bit: number) => `${CDN}589094_oscard_new_${bit}.js`
-const LINEUP_URL: Record<LineupSource, (page: number) => string> = {
+const LINEUP_URL: Record<OfficialSource, (page: number) => string> = {
   recommend: (p) => `${CDN}598252_oslineupbyrecommend_pro_${p}.js`,
   hot: (p) => `${CDN}600264_oslineupbyhot_pro_${p}.js`,
   beginner: (p) => `${CDN}600269_oslineupbybeginner_pro_${p}.js`,
@@ -46,6 +51,8 @@ const OUT_DIR = path.resolve(import.meta.dirname, '../public/data')
 
 /** Minimum counts; anything lower means the source changed shape and we must not publish. */
 const MIN_COUNTS = { heroes: 50, equips: 30, talents: 100, effects: 30, lords: 10, lineups: 50, cpTalents: 5 }
+/** Fewer extra Huya lineups than this means their format changed: publish without them. */
+const HUYA_MIN_LINEUPS = 100
 
 /** Short names used in talent descriptions that differ from the hero card name. */
 const HERO_ALIASES: Record<string, string> = { 婉儿: '上官婉儿' }
@@ -182,7 +189,7 @@ async function fetchCards<K extends keyof RawCardFile>(bit: number, key: K): Pro
   return list as NonNullable<RawCardFile[K]>
 }
 
-async function fetchLineupList(source: LineupSource): Promise<RawLineup[]> {
+async function fetchLineupList(source: OfficialSource): Promise<RawLineup[]> {
   const all: RawLineup[] = []
   for (let page = 1; page <= MAX_LINEUP_PAGES; page++) {
     const res = await fetchJson<RawLineup[]>(LINEUP_URL[source](page))
@@ -484,6 +491,147 @@ function normLineup(r: RawLineup, heroById: Map<number, Hero>): Lineup {
 }
 
 // ---------------------------------------------------------------------------
+// Huya lineups
+// ---------------------------------------------------------------------------
+
+/** Huya refers to cards by name; official names are unique per card type. */
+interface CardIndex {
+  heroById: Map<number, Hero>
+  equip: Map<string, number>
+  talent: Map<string, number>
+  effect: Map<string, number>
+  lord: Map<string, number>
+}
+
+/** Board cell "A1".."G4": column A-G → x 0-6, row 1 (front) - 4 (back) → z 3-0. */
+const HUYA_CELL = /^([A-G])([1-4])$/
+
+const idsByName = (names: (string | undefined)[] | undefined, index: Map<string, number>) =>
+  (names ?? []).map((n) => index.get(n ?? '')).filter((id): id is number => id !== undefined)
+
+function normHuyaLineup(r: RawHuyaLineup, cards: CardIndex): Lineup | null {
+  const key = String(r.code).trim()
+  // A few entries carry placeholder codes such as "6" that cannot be imported in game.
+  if (!/^\d{5,}$/.test(key)) return null
+  const g = r.groups.find((x) => x.id === r.activeGroup) ?? r.groups[0]
+  if (!g) return null
+  const heroRefs = (list: RawHuyaHeroRef[] | undefined) =>
+    (list ?? []).map((h) => toNum(h.id)).filter((id) => cards.heroById.has(id))
+
+  const heroes: LineupHero[] = []
+  for (const u of g.units ?? []) {
+    const cell = HUYA_CELL.exec(u.cell ?? '')
+    const id = toNum(u.id)
+    if (!cell || !cards.heroById.has(id)) continue
+    heroes.push({
+      id,
+      x: cell[1].charCodeAt(0) - 'A'.charCodeAt(0),
+      z: 4 - Number(cell[2]),
+      core: ([0, 1, 2, 3].includes(toNum(u.t)) ? toNum(u.t) : 0) as CoreRole,
+      awakened: !!u.evo,
+      equips: idsByName(u.eq, cards.equip),
+    })
+  }
+  if (!heroes.length) return null
+
+  const lords: number[] = []
+  const lordTips: Record<number, string> = {}
+  for (const l of r.lords ?? []) {
+    const id = cards.lord.get(l.name ?? '')
+    if (id === undefined) continue
+    lords.push(id)
+    const tip = richText(l.note)
+    if (tip) lordTips[id] = tip
+  }
+
+  return {
+    key,
+    name: r.title ?? '',
+    sources: ['huya'],
+    rank: {},
+    // Huya's tags are snapshots ("近期飙升" from weeks ago) or its own categories: not carried over.
+    tags: [],
+    lords,
+    lordTips,
+    heroes,
+    camps: lineupCamps(heroes.map((h) => h.id), cards.heroById),
+    talents: idsByName(g.talentCards?.map((t) => t.name), cards.talent),
+    effects: idsByName(g.effectCards?.map((t) => t.name), cards.effect),
+    author: r.author ?? '',
+    createdAt: parseCreatedAt(r.createTimestamp),
+    uses: toNum(r.useNum),
+    score: toNum(r.score),
+    scoreNum: 0,
+    likes: 0,
+    brief: richText(r.brief || g.thought),
+    positionDesc: richText(r.positionDesc),
+    equipDesc: richText(r.equipDesc),
+    talentDesc: richText(g.auctionAdvice),
+    effectDesc: richText(g.keyItems),
+    stages: (g.operations ?? []).map((o) => {
+      // "回合4-11" → 4..11; a single number means a one-round stage.
+      const [from = 0, to = from] = (o.roundRange?.match(/\d+/g) ?? []).map(Number)
+      return { from, to, main: heroRefs(o.mainHeroes), sub: heroRefs(o.subHeroes), desc: richText(o.desc) }
+    }),
+    season: 0,
+  }
+}
+
+function normHuyaStats(s: RawHuyaStat): LineupStats | undefined {
+  const matches = toNum(s.count)
+  const avgPlace = toNum(s.avgPlacement)
+  if (matches <= 0 || avgPlace <= 0) return undefined
+  const round = (n: number, digits: number) => Number(n.toFixed(digits))
+  return { matches, avgPlace: round(avgPlace, 2), top1: round(toNum(s.firstRate), 4), top3: round(toNum(s.top3Rate), 4) }
+}
+
+/**
+ * Lineups from Huya that are not in the official lists (official data wins on the same code),
+ * and Huya's match stats attached to whichever lineup they belong to.
+ * Optional source: on any failure, return no lineups and leave the official ones untouched.
+ */
+async function syncHuya(official: Map<string, Lineup>, cards: CardIndex): Promise<Lineup[]> {
+  let data: Awaited<ReturnType<typeof fetchHuya>>
+  try {
+    data = await fetchHuya()
+  } catch (err) {
+    console.warn(`  ! Huya skipped: ${err instanceof Error ? err.message : String(err)}`)
+    return []
+  }
+  const extras = new Map<string, Lineup>()
+  let skipped = 0
+  for (const raw of data.lineups) {
+    const key = String(raw.code).trim()
+    if (official.has(key) || extras.has(key)) continue
+    const l = normHuyaLineup(raw, cards)
+    if (!l) {
+      skipped++
+      continue
+    }
+    l.rank.huya = extras.size + 1
+    extras.set(key, l)
+  }
+  if (extras.size < HUYA_MIN_LINEUPS) {
+    console.warn(`  ! Huya skipped: only ${extras.size} usable lineups (< ${HUYA_MIN_LINEUPS}), format may have changed`)
+    return []
+  }
+
+  const codeById = new Map(data.lineups.map((x) => [x.id, String(x.code).trim()]))
+  let withStats = 0
+  for (const [id, s] of data.stats) {
+    const key = codeById.get(id) ?? ''
+    const lineup = official.get(key) ?? extras.get(key)
+    const stats = normHuyaStats(s)
+    if (lineup && stats) {
+      lineup.stats = stats
+      withStats++
+    }
+  }
+  console.log(`  huya: ${data.lineups.length} in library, ${extras.size} not in official lists, ${skipped} unusable, stats for ${withStats}`)
+  return [...extras.values()]
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -525,10 +673,20 @@ async function main() {
   }
   const lineups = [...lineupMap.values()]
 
+  console.log('Fetching Huya lineups...')
+  const nameIndex = (list: { id: number; name: string }[]) => new Map(list.map((c) => [c.name, c.id]))
+  const huyaLineups = await syncHuya(lineupMap, {
+    heroById,
+    equip: nameIndex(equips),
+    talent: nameIndex(talents),
+    effect: nameIndex(effects),
+    lord: nameIndex(lords),
+  })
+
   // Referential integrity report (warn only; the official data occasionally lags)
   const known = new Set<number>([...heroIds, ...equips.map((e) => e.id), ...talents.map((t) => t.id), ...effects.map((e) => e.id)])
   const unknown = new Set<number>()
-  for (const l of lineups) {
+  for (const l of [...lineups, ...huyaLineups]) {
     for (const h of l.heroes) [h.id, ...h.equips].forEach((id) => known.has(id) || unknown.add(id))
     ;[...l.talents, ...l.effects].forEach((id) => known.has(id) || unknown.add(id))
   }
@@ -541,6 +699,7 @@ async function main() {
     effects: effects.length,
     lords: lords.length,
     lineups: lineups.length,
+    huyaLineups: huyaLineups.length,
     cpTalents: talents.filter((t) => t.cp).length,
   }
   for (const [k, min] of Object.entries(MIN_COUNTS)) {
@@ -555,6 +714,7 @@ async function main() {
     [DATA_FILES.effects]: effects,
     [DATA_FILES.lords]: lords,
     [DATA_FILES.lineups]: lineups,
+    [DATA_FILES.huyaLineups]: huyaLineups,
     [DATA_FILES.keywords]: keywords,
   }
   const serialized = Object.entries(files).map(([name, data]) => [name, JSON.stringify(data)] as const)

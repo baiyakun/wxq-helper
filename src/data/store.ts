@@ -1,7 +1,7 @@
 import { ref, shallowRef } from 'vue'
 import type { EffectCard, Equip, Hero, Keyword, Lineup, Lord, Talent } from '@/types/data'
 import { groupCpTalents, type CpGroup } from './cp'
-import { loadGameData, type GameData } from './loader'
+import { loadGameData, loadHuyaLineups, type GameData } from './loader'
 
 export type CardKind = 'hero' | 'equip' | 'talent' | 'effect' | 'lord'
 
@@ -33,9 +33,25 @@ const db = shallowRef<Db | null>(null)
 const status = ref<Status>('loading')
 const error = ref('')
 
+/**
+ * Lineups are reactive so views update when Huya's lineups arrive in the background:
+ * `db.lineups` / `db.lineupByKey` are getters over these refs.
+ */
+let officialLineups: Lineup[] = []
+const lineups = shallowRef<Lineup[]>([])
+const lineupByKey = shallowRef(new Map<string, Lineup>())
+const huyaStatus = ref<Status>('loading')
+
+function setLineups(list: Lineup[]) {
+  lineups.value = list
+  lineupByKey.value = new Map(list.map((l) => [l.key, l]))
+}
+
 const byId = <T extends { id: number }>(list: T[]) => new Map(list.map((x) => [x.id, x]))
 
-function buildDb(data: GameData): Db {
+function buildDb({ lineups: official, ...data }: GameData): Db {
+  officialLineups = official
+  setLineups(official)
   const cpByHero = new Map<number, Talent[]>()
   for (const t of data.talents) {
     for (const hid of t.cp?.heroes ?? []) {
@@ -46,6 +62,12 @@ function buildDb(data: GameData): Db {
   }
   return {
     ...data,
+    get lineups() {
+      return lineups.value
+    },
+    get lineupByKey() {
+      return lineupByKey.value
+    },
     heroById: byId(data.heroes),
     equipById: byId(data.equips),
     talentById: byId(data.talents),
@@ -54,7 +76,6 @@ function buildDb(data: GameData): Db {
     keywordByName: new Map(data.keywords.map((k) => [k.name, k])),
     cpByHero,
     cpGroups: groupCpTalents(data.talents),
-    lineupByKey: new Map(data.lineups.map((l) => [l.key, l])),
   }
 }
 
@@ -64,15 +85,34 @@ export async function initData(): Promise<void> {
   try {
     db.value = buildDb(await loadGameData())
     status.value = 'ready'
+    void loadHuya()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
     status.value = 'error'
   }
 }
 
-export function useDataStatus() {
-  return { status, error }
+/** Append Huya's lineups after the official ones. The app works without them. */
+export async function loadHuya(): Promise<void> {
+  const d = db.value
+  if (!d) return
+  huyaStatus.value = 'loading'
+  try {
+    const extra = await loadHuyaLineups(d.meta)
+    if (db.value !== d) return // data was reloaded meanwhile
+    setLineups([...officialLineups, ...extra])
+    huyaStatus.value = 'ready'
+  } catch {
+    if (db.value === d) huyaStatus.value = 'error'
+  }
 }
+
+export function useDataStatus() {
+  return { status, error, huyaStatus }
+}
+
+/** False while Huya's lineups are still loading, i.e. a missing lineup key may still turn up. */
+export const lineupsComplete = () => huyaStatus.value !== 'loading'
 
 /** Access the loaded data. Views are only mounted after data is ready. */
 export function useDb(): Db {

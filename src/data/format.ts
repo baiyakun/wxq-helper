@@ -6,6 +6,9 @@ export function formatWan(n: number): string {
   return `${v}万`
 }
 
+/** 0.1378 -> "13.8%" */
+export const formatPercent = (ratio: number) => `${(ratio * 100).toFixed(1).replace(/\.0$/, '')}%`
+
 /** unix seconds -> "MM-DD"; empty when unknown */
 export function formatMonthDay(sec: number): string {
   if (!sec) return ''

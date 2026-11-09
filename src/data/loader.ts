@@ -36,3 +36,9 @@ export async function loadGameData(): Promise<GameData> {
   ])
   return { meta, heroes, equips, talents, effects, lords, lineups, keywords }
 }
+
+/** Extra lineups collected by Huya; loaded after the app has started. Empty when the sync had none. */
+export async function loadHuyaLineups(meta: DataMeta): Promise<Lineup[]> {
+  if (!meta.counts.huyaLineups) return []
+  return getJson<Lineup[]>(DATA_FILES.huyaLineups, meta.hash)
+}

@@ -15,7 +15,8 @@ const counts = computed(() => [
   { k: 'CP天赋', v: db.meta.counts.cpTalents },
   { k: '装备', v: db.meta.counts.equips },
   { k: '效果牌', v: db.meta.counts.effects },
-  { k: '阵容', v: db.meta.counts.lineups },
+  { k: '官方阵容', v: db.meta.counts.lineups },
+  { k: '虎牙阵容', v: db.meta.counts.huyaLineups ?? 0 },
 ])
 </script>
 
@@ -54,7 +55,7 @@ const counts = computed(() => [
     <section class="rounded-2xl border border-line bg-surface p-4 text-sm leading-relaxed text-muted">
       <h2 class="font-semibold text-text">关于</h2>
       <p class="mt-1">
-        非官方的个人研究工具。数据来自王者万象棋官网公开的卡牌与阵容数据，定时自动同步。卡牌名称、文案与图片版权归腾讯所有。
+        非官方的个人研究工具。数据来自王者万象棋官网公开的卡牌与阵容数据，以及虎牙万象棋助手收录的阵容与实战统计，定时自动同步。卡牌名称、文案与图片版权归腾讯所有。
       </p>
     </section>
   </div>

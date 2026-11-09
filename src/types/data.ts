@@ -166,14 +166,28 @@ export interface LineupStage {
   desc: string
 }
 
-export type LineupSource = 'recommend' | 'hot' | 'beginner'
+/** The three official lists */
+export type OfficialSource = 'recommend' | 'hot' | 'beginner'
+/** `huya`: collected by Huya's 万象棋助手 and not in any official list right now */
+export type LineupSource = OfficialSource | 'huya'
+
+/** Match stats published by Huya, aggregated over similar lineups (same core heroes) */
+export interface LineupStats {
+  matches: number
+  /** average placement, 1-8 */
+  avgPlace: number
+  /** share of 1st places, 0-1 */
+  top1: number
+  /** share of top-3 places, 0-1 */
+  top3: number
+}
 
 export interface Lineup {
-  /** official lineup key, also used as the in-game lineup code */
+  /** lineup key, also used as the in-game lineup code */
   key: string
   name: string
   sources: LineupSource[]
-  /** rank inside each official list (1-based) */
+  /** rank inside each list (1-based) */
   rank: Partial<Record<LineupSource, number>>
   tags: string[]
   lords: number[]
@@ -198,6 +212,7 @@ export interface Lineup {
   stages: LineupStage[]
   /** official season id (0 when the source does not specify one) */
   season: number
+  stats?: LineupStats
 }
 
 export interface DataMeta {
@@ -213,7 +228,10 @@ export interface DataMeta {
     talents: number
     effects: number
     lords: number
+    /** official lineups */
     lineups: number
+    /** extra lineups from Huya (0 when that source was unavailable) */
+    huyaLineups: number
     cpTalents: number
   }
 }
@@ -231,6 +249,8 @@ export const DATA_FILES = {
   effects: 'effects.json',
   lords: 'lords.json',
   lineups: 'lineups.json',
+  /** loaded in the background after the app has started */
+  huyaLineups: 'lineups-huya.json',
   keywords: 'keywords.json',
   meta: 'meta.json',
 } as const

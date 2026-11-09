@@ -10,6 +10,7 @@ import TalentPicker from '@/components/TalentPicker.vue'
 import { useIncremental } from '@/composables/useIncremental'
 import { usePersistentRef } from '@/composables/usePersistentRef'
 import { campColor } from '@/data/display'
+import { isOfficial } from '@/data/lineupQuery'
 import { MATCH_WEIGHTS, hasInput, recommend, type RecommendInput } from '@/data/recommend'
 import { useDb } from '@/data/store'
 import { CAMPS } from '@/types/data'
@@ -33,7 +34,7 @@ const active = computed(() => hasInput(input.value))
 
 // Lords recommended by more official lineups first.
 const lordUse = new Map<number, number>()
-for (const l of db.lineups) for (const id of l.lords) lordUse.set(id, (lordUse.get(id) ?? 0) + 1)
+for (const l of db.lineups.filter(isOfficial)) for (const id of l.lords) lordUse.set(id, (lordUse.get(id) ?? 0) + 1)
 const lords = [...db.lords].sort((a, b) => (lordUse.get(b.id) ?? 0) - (lordUse.get(a.id) ?? 0))
 const campOptions = CAMPS.filter((c) => c !== '无阵营').map((c) => ({ value: c as string, label: c, color: campColor(c) }))
 
@@ -67,7 +68,7 @@ onMounted(() => {
     >
       <div>
         <h2 class="font-semibold">智能推荐</h2>
-        <p class="mt-0.5 text-[13px] leading-relaxed text-muted">选你的棋手、想玩的阵营、手上已有的英雄和拿到的英雄天赋，按匹配度推荐官方阵容。每项都可以不填。</p>
+        <p class="mt-0.5 text-[13px] leading-relaxed text-muted">选你的棋手、想玩的阵营、手上已有的英雄和拿到的英雄天赋，按匹配度推荐官方榜单和虎牙收录的阵容。每项都可以不填。</p>
       </div>
 
       <div class="flex items-start gap-2" role="group" aria-label="我的棋手">
