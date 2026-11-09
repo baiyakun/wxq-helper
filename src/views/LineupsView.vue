@@ -192,14 +192,14 @@ watch(
           v-for="s in SOURCES"
           :key="s.key"
           type="button"
-          class="relative flex h-11 shrink-0 items-center gap-1 px-2 text-[15px] transition-colors sm:px-3"
+          class="relative flex h-11 shrink-0 items-center gap-1 px-1.5 text-[14px] transition-colors sm:px-3 sm:text-[15px]"
           :class="source === s.key ? 'font-semibold text-text' : 'text-muted hover:text-text'"
           :aria-pressed="source === s.key"
           @click="source = s.key"
         >
           {{ s.label }}
           <span class="text-xs text-faint tabular-nums">{{ s.key !== 'huya' || huyaStatus === 'ready' ? sourceCounts[s.key] : huyaStatus === 'loading' ? '…' : '–' }}</span>
-          <span v-if="source === s.key" class="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent sm:inset-x-3" aria-hidden="true" />
+          <span v-if="source === s.key" class="absolute inset-x-1.5 bottom-0 h-0.5 rounded-full bg-accent sm:inset-x-3" aria-hidden="true" />
         </button>
       </div>
     </nav>

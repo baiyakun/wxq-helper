@@ -95,8 +95,12 @@ function onFavorite() {
       </p>
       <div class="mt-3 flex gap-2">
         <button type="button" class="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-accent px-4 font-medium text-accent-ink" @click="copyCode">
-          <NavIcon name="copy" :size="18" />复制阵容码
-          <span class="font-mono text-xs opacity-70">{{ lineup.key }}</span>
+          <NavIcon name="copy" :size="18" class="shrink-0" />
+          <!-- Codes run up to 19 digits: keep them on their own line so the label never wraps -->
+          <span class="flex flex-col items-start leading-tight">
+            <span class="whitespace-nowrap">复制阵容码</span>
+            <span class="font-mono text-[11px] opacity-70">{{ lineup.key }}</span>
+          </span>
         </button>
         <button
           type="button"
