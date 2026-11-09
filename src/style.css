@@ -1,0 +1,142 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Dark is the default; light applies when the system prefers it.
+ * Components use the Tailwind utilities generated from @theme (bg-surface, text-muted, ...).
+ */
+:root {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-2: #1f232c;
+  --surface-3: #2a2f3a;
+  --line: #2c313c;
+  --text: #e7e9ee;
+  --muted: #9aa1ad;
+  --faint: #6b7280;
+  --accent: #e7b75f;
+  --accent-ink: #1a1408;
+  --scrim: rgb(0 0 0 / 0.55);
+
+  /* card tiers 1-6 */
+  --q1: #a1a8b3;
+  --q2: #5fcf8a;
+  --q3: #5aa7f2;
+  --q4: #b98cf5;
+  --q5: #f2a33a;
+  --q6: #f0645a;
+
+  /* talent grades */
+  --t-bronze: #d08a52;
+  --t-silver: #c3cad6;
+  --t-gold: #f5cd4b;
+  --t-exclusive: #f27bb5;
+
+  /* camps */
+  --camp-sanfen: #f0726a;
+  --camp-riluo: #f59a4a;
+  --camp-dahe: #45b8f0;
+  --camp-heluo: #e8c14a;
+  --camp-zhulu: #a98bf5;
+  --camp-none: #8f98a6;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --surface-2: #f0f2f5;
+    --surface-3: #e4e7ec;
+    --line: #dde1e7;
+    --text: #1b1f27;
+    --muted: #5d6573;
+    --faint: #8a93a1;
+    --accent: #b07a14;
+    --accent-ink: #ffffff;
+    --scrim: rgb(15 17 21 / 0.4);
+    --q1: #7b8390;
+    --q2: #23a35a;
+    --q3: #2f7fd1;
+    --q4: #8a5ad6;
+    --q5: #d07a10;
+    --q6: #d53c32;
+    --t-bronze: #a8622d;
+    --t-silver: #7d8696;
+    --t-gold: #b88a00;
+    --t-exclusive: #c9408a;
+    --camp-sanfen: #d4483f;
+    --camp-riluo: #d8701c;
+    --camp-dahe: #1c8fc8;
+    --camp-heluo: #b38900;
+    --camp-zhulu: #7b5bd6;
+    --camp-none: #6b7483;
+    color-scheme: light;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+}
+
+/* Element defaults live in the base layer so utilities (e.g. outline-none) can override them. */
+@layer base {
+  html,
+  body {
+    background: var(--bg);
+    color: var(--text);
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    line-height: 1.6;
+  }
+
+  button {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  input[type='search']::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+/* Hide horizontal scrollbars on chip rows while keeping them scrollable */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

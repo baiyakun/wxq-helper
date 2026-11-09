@@ -1,0 +1,81 @@
+# Sync official game data, build, and deploy to GitHub Pages.
+# Scheduled runs only redeploy when the data hash differs from the live site.
+name: Sync & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Every 3 hours.
+    - cron: '17 */3 * * *'
+    # Hourly on Thursday Beijing time (game update day) = Wed 16:00 – Thu 15:59 UTC.
+    - cron: '47 16-23 * * 3'
+    - cron: '47 0-15 * * 4'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      deploy: ${{ steps.check.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Fails (and keeps the live site as is) when the official data looks broken.
+      - name: Sync official data
+        run: npm run sync
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Compare with live data
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          SITE: ${{ steps.pages.outputs.base_url }}
+        run: |
+          new=$(node -p "require('./public/data/meta.json').hash")
+          old=$(curl -fsS --max-time 20 "$SITE/data/meta.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).hash" 2>/dev/null || echo none)
+          echo "live: $old, synced: $new"
+          if [ "$EVENT" = "schedule" ] && [ "$new" = "$old" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Data unchanged, skipping deploy."
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.check.outputs.deploy == 'true'
+        run: npm run build
+
+      - if: steps.check.outputs.deploy == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
