@@ -215,6 +215,105 @@ export interface Lineup {
   stats?: LineupStats
 }
 
+// ---------------------------------------------------------------------------
+// 钻石狂潮 (Diamond Rush mode), from Huya's 万象棋助手
+// ---------------------------------------------------------------------------
+
+/** Rooms of the mode, by the diamonds brought in: 标准场 / 精英场 / 大师场 */
+export type RushRoom = 'standard' | 'elite' | 'master'
+
+export interface RushRating {
+  /** S / A / B ... */
+  grade: string
+  /** 0-100 */
+  score: number
+}
+
+export type RushCardKind = 'hero' | 'talent' | 'effect' | 'equip'
+
+/**
+ * A card as listed by Huya. Most 钻石狂潮 cards (auction talents and equipment, pack cards) are not
+ * in the official data, so name, icon and text are carried along. `id` is the official card id
+ * when the card exists in our tables (its detail can then be opened), otherwise 0.
+ */
+export interface RushCard {
+  kind: RushCardKind
+  id: number
+  name: string
+  icon: string
+  /** rich text for official cards, plain text otherwise */
+  desc: string
+}
+
+export interface RushStep {
+  label: string
+  reason: string
+}
+
+/** The opening card pack: a fixed set of cards, one of three offered at the start of a game */
+export interface RushPack {
+  name: string
+  items: (RushCard & { count: number })[]
+  /** order to play the pack's talent / effect cards; `label` is e.g. "P0 · 河洛助力" */
+  opening: RushStep[]
+  reminder: string
+  /** hero deploy order; empty when the heroes have no hard order */
+  deploy: RushStep[]
+  deployFollowUp: string
+  deployNote: string
+  /** later picks from the shared effect-tip pool, by grade (S first) */
+  tips: { grade: string; card: RushCard }[]
+}
+
+export interface RushPick extends RushCard {
+  /** e.g. 通用系列 / 整备系列; empty for equipment */
+  series: string
+}
+
+export interface RushRound {
+  round: number
+  /** primary pick first, then the alternatives */
+  picks: RushPick[]
+  /** the primary pick is one of the lineup's key items (worth bidding more) */
+  keyPick: boolean
+}
+
+/** `id` is 0 for units that are not official hero cards (e.g. 始祖熊灵, summoned by a talent) */
+export interface RushHero extends LineupHero {
+  /** name and icon of a unit that is not an official hero (id 0) */
+  name?: string
+  icon?: string
+  /** equipment that is not in the official data (e.g. hero-specific items), by name */
+  extraEquips?: string[]
+}
+
+/** A lineup variant; the second one is usually the late-game transition */
+export interface RushGroup {
+  label: string
+  heroes: RushHero[]
+  thought: string
+  auctionAdvice: string
+  keyItems: string
+  rounds: RushRound[]
+  /** hero changes compared to the first group */
+  added: number[]
+  removed: number[]
+}
+
+export interface RushLineup {
+  /** Huya's id, shared by the lineup and its opening pack */
+  id: string
+  name: string
+  /** pack category: 逆天改命 / 契约 / 草根狂潮 / 常规阵营 / 夺取 */
+  category: string
+  /** main hero or camp named in the title */
+  subject: string
+  camps: CampName[]
+  groups: RushGroup[]
+  pack?: RushPack
+  ratings: Partial<Record<RushRoom, RushRating>>
+}
+
 export interface DataMeta {
   /** ISO time of the sync run that produced a data change */
   updatedAt: string
@@ -232,6 +331,8 @@ export interface DataMeta {
     lineups: number
     /** extra lineups from Huya (0 when that source was unavailable) */
     huyaLineups: number
+    /** 钻石狂潮 lineups from Huya (0 when that source was unavailable) */
+    rushLineups: number
     cpTalents: number
   }
 }
@@ -251,6 +352,8 @@ export const DATA_FILES = {
   lineups: 'lineups.json',
   /** loaded in the background after the app has started */
   huyaLineups: 'lineups-huya.json',
+  /** 钻石狂潮 lineups and packs, also loaded in the background */
+  rush: 'rush.json',
   keywords: 'keywords.json',
   meta: 'meta.json',
 } as const

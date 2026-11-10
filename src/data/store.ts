@@ -1,7 +1,7 @@
 import { ref, shallowRef } from 'vue'
-import type { EffectCard, Equip, Hero, Keyword, Lineup, Lord, Talent } from '@/types/data'
+import type { EffectCard, Equip, Hero, Keyword, Lineup, Lord, RushLineup, Talent } from '@/types/data'
 import { groupCpTalents, type CpGroup } from './cp'
-import { loadGameData, loadHuyaLineups, type GameData } from './loader'
+import { loadGameData, loadHuyaLineups, loadRushLineups, type GameData } from './loader'
 
 export type CardKind = 'hero' | 'equip' | 'talent' | 'effect' | 'lord'
 
@@ -25,6 +25,9 @@ export interface Db extends GameData {
   /** CP talents grouped by hero pair */
   cpGroups: CpGroup[]
   lineupByKey: Map<string, Lineup>
+  /** 钻石狂潮 lineups (with their opening packs); empty until loaded in the background */
+  rush: RushLineup[]
+  rushById: Map<string, RushLineup>
 }
 
 type Status = 'loading' | 'ready' | 'error'
@@ -47,11 +50,22 @@ function setLineups(list: Lineup[]) {
   lineupByKey.value = new Map(list.map((l) => [l.key, l]))
 }
 
+/** 钻石狂潮 data, reactive for the same reason as the lineups above. */
+const rush = shallowRef<RushLineup[]>([])
+const rushById = shallowRef(new Map<string, RushLineup>())
+const rushStatus = ref<Status>('loading')
+
+function setRush(list: RushLineup[]) {
+  rush.value = list
+  rushById.value = new Map(list.map((l) => [l.id, l]))
+}
+
 const byId = <T extends { id: number }>(list: T[]) => new Map(list.map((x) => [x.id, x]))
 
 function buildDb({ lineups: official, ...data }: GameData): Db {
   officialLineups = official
   setLineups(official)
+  setRush([])
   const cpByHero = new Map<number, Talent[]>()
   for (const t of data.talents) {
     for (const hid of t.cp?.heroes ?? []) {
@@ -67,6 +81,12 @@ function buildDb({ lineups: official, ...data }: GameData): Db {
     },
     get lineupByKey() {
       return lineupByKey.value
+    },
+    get rush() {
+      return rush.value
+    },
+    get rushById() {
+      return rushById.value
     },
     heroById: byId(data.heroes),
     equipById: byId(data.equips),
@@ -86,6 +106,7 @@ export async function initData(): Promise<void> {
     db.value = buildDb(await loadGameData())
     status.value = 'ready'
     void loadHuya()
+    void loadRush()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
     status.value = 'error'
@@ -107,12 +128,30 @@ export async function loadHuya(): Promise<void> {
   }
 }
 
+/** Load the 钻石狂潮 lineups. The rest of the app works without them. */
+export async function loadRush(): Promise<void> {
+  const d = db.value
+  if (!d) return
+  rushStatus.value = 'loading'
+  try {
+    const list = await loadRushLineups(d.meta)
+    if (db.value !== d) return // data was reloaded meanwhile
+    setRush(list)
+    rushStatus.value = 'ready'
+  } catch {
+    if (db.value === d) rushStatus.value = 'error'
+  }
+}
+
 export function useDataStatus() {
-  return { status, error, huyaStatus }
+  return { status, error, huyaStatus, rushStatus }
 }
 
 /** False while Huya's lineups are still loading, i.e. a missing lineup key may still turn up. */
 export const lineupsComplete = () => huyaStatus.value !== 'loading'
+
+/** Same for 钻石狂潮 lineups. */
+export const rushComplete = () => rushStatus.value !== 'loading'
 
 /** Access the loaded data. Views are only mounted after data is ready. */
 export function useDb(): Db {

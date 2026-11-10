@@ -23,6 +23,12 @@ export const router = createRouter({
       meta: { title: '阵容详情', back: '/lineups' },
     },
     { path: '/recommend', component: () => import('./views/RecommendView.vue'), meta: { title: '推荐' } },
+    { path: '/rush', component: () => import('./views/RushView.vue'), meta: { title: '钻石狂潮' } },
+    {
+      path: '/rush/:id',
+      component: () => import('./views/RushDetailView.vue'),
+      meta: { title: '狂潮阵容', back: '/rush' },
+    },
     { path: '/codex', redirect: '/codex/heroes' },
     {
       path: `/codex/:tab(${CODEX_TABS.join('|')})`,

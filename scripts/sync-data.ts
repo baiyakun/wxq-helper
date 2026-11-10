@@ -9,7 +9,8 @@
  *   lineups: 598252_oslineupbyrecommend_pro_{page}.js, 600264_oslineupbyhot_pro_{page}.js,
  *            600269_oslineupbybeginner_pro_{page}.js
  * Plus, optionally, the lineup library of Huya's 万象棋助手 (see ./huya.ts); lineups that are
- * not in the official lists go to lineups-huya.json. A Huya failure never blocks the sync.
+ * not in the official lists go to lineups-huya.json, and its 钻石狂潮 lineups, opening packs and
+ * auction picks go to rush.json. A Huya failure never blocks the sync.
  */
 import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -30,10 +31,30 @@ import type {
   MiniCard,
   LordSlot,
   OfficialSource,
+  RushCard,
+  RushCardKind,
+  RushGroup,
+  RushHero,
+  RushLineup,
+  RushPack,
+  RushPick,
+  RushRating,
+  RushRoom,
+  RushStep,
   Talent,
 } from '../src/types/data.ts'
 import { CAMPS, DATA_FILES } from '../src/types/data.ts'
-import { fetchHuya, type RawHuyaHeroRef, type RawHuyaLineup, type RawHuyaStat } from './huya.ts'
+import {
+  fetchHuya,
+  fetchHuyaRush,
+  type HuyaRushData,
+  type RawHuyaHeroRef,
+  type RawHuyaLineup,
+  type RawHuyaStat,
+  type RawRushCard,
+  type RawRushGroup,
+  type RawRushLineup,
+} from './huya.ts'
 
 const CDN = 'https://game.gtimg.cn/images/amside/ide_timer/'
 const CARD_URL = (bit: number) => `${CDN}589094_oscard_new_${bit}.js`
@@ -53,6 +74,8 @@ const OUT_DIR = path.resolve(import.meta.dirname, '../public/data')
 const MIN_COUNTS = { heroes: 50, equips: 30, talents: 100, effects: 30, lords: 10, lineups: 50, cpTalents: 5 }
 /** Fewer extra Huya lineups than this means their format changed: publish without them. */
 const HUYA_MIN_LINEUPS = 100
+/** Same for Huya's 钻石狂潮 lineups (55 when this was written). */
+const RUSH_MIN_LINEUPS = 30
 
 /** Short names used in talent descriptions that differ from the hero card name. */
 const HERO_ALIASES: Record<string, string> = { 婉儿: '上官婉儿' }
@@ -632,6 +655,207 @@ async function syncHuya(official: Map<string, Lineup>, cards: CardIndex): Promis
 }
 
 // ---------------------------------------------------------------------------
+// 钻石狂潮 (Huya)
+// ---------------------------------------------------------------------------
+
+const RUSH_ROOMS: readonly RushRoom[] = ['standard', 'elite', 'master']
+const RUSH_GRADES = ['S', 'A', 'B', 'C', 'D']
+
+/** Huya marks keywords with box-drawing glyphs that its font shows as icons (e.g. "╬整备"): drop them. */
+const rushText = (s: string | null | undefined) =>
+  stripMarkers((s ?? '').replace(/[─-╿]/g, '').replace(/\r\n?/g, '\n')).trim()
+
+const RUSH_CORE: [RegExp, CoreRole][] = [
+  [/CoreDps|输出/, 1],
+  [/CoreTank|坦克/, 2],
+  [/CoreFunc|功能/, 3],
+]
+const rushCore = (s: string | undefined): CoreRole => RUSH_CORE.find(([re]) => re.test(s ?? ''))?.[1] ?? 0
+
+interface RushIndex {
+  heroById: Map<number, Hero>
+  hero: Map<string, Hero>
+  equip: Map<string, Equip>
+  effect: Map<string, EffectCard>
+  /** Huya catalog icons by card name / id */
+  icons: Map<string, string>
+  /** hero names that are not in the official data (reported once at the end) */
+  missing: Set<string>
+}
+
+const heroCard = (h: Hero): RushCard => ({ kind: 'hero', id: h.id, name: h.name, icon: h.avatar, desc: h.desc })
+
+/**
+ * A 钻石狂潮-only card with Huya's text. Auction and pack cards are not taken from the official
+ * tables even when a name matches, because their effect differs from the 万象大赛 card.
+ */
+function huyaCard(kind: RushCardKind, name: string, desc: string | undefined, idx: RushIndex, huyaId?: string | number): RushCard {
+  const icon = idx.icons.get(name) ?? (huyaId === undefined ? undefined : idx.icons.get(String(huyaId)))
+  return { kind, id: 0, name, icon: safeUrl(icon), desc: rushText(desc) }
+}
+
+const rushSteps = (list: { label?: string; reason?: string }[] | undefined): RushStep[] =>
+  (list ?? []).map((s) => ({ label: rushText(s.label), reason: rushText(s.reason) })).filter((s) => s.label)
+
+function normRushPack(id: string, data: HuyaRushData, idx: RushIndex): RushPack | undefined {
+  const p = data.packs[id]
+  if (!p) return undefined
+  const items = (p.contents ?? []).flatMap((c) => {
+    const name = rushText(c.name)
+    if (!name) return []
+    const kind: RushCardKind = c.cardType === 'hero' ? 'hero' : c.cardType === 'talent' ? 'talent' : c.cardType === 'equip' ? 'equip' : 'effect'
+    const hero = kind === 'hero' ? (idx.heroById.get(toNum(c.cardId)) ?? idx.hero.get(name)) : undefined
+    if (kind === 'hero' && !hero) idx.missing.add(name)
+    // Summaries often end with a stray "；".
+    const card = hero ? heroCard(hero) : huyaCard(kind, name, c.effectSummary?.replace(/[；;]\s*$/, ''), idx, c.cardId)
+    return [{ ...card, count: Math.max(1, toNum(c.count, 1)) }]
+  })
+  if (!items.length) return undefined
+
+  // Effect tips are ordinary effect cards from the shared pool: link the official card when known.
+  const grades = Object.keys(p.recs ?? {}).sort((a, b) => RUSH_GRADES.indexOf(a) - RUSH_GRADES.indexOf(b) || a.localeCompare(b))
+  const tips = grades.flatMap((grade) =>
+    (p.recs?.[grade] ?? []).flatMap((t) => {
+      const name = rushText(t.name)
+      if (!name) return []
+      const e = idx.effect.get(name)
+      const card: RushCard = e ? { kind: 'effect', id: e.id, name, icon: e.icon, desc: e.desc } : huyaCard('effect', name, t.effectSummary, idx)
+      return [{ grade, card }]
+    }),
+  )
+  const d = data.deploys[id]
+  return {
+    name: rushText(p.packName),
+    items,
+    opening: (p.opening ?? [])
+      .map((o) => ({ label: [rushText(o.priority), rushText(o.name)].filter(Boolean).join(' · '), reason: rushText(o.reason) }))
+      .filter((s) => s.label),
+    reminder: rushText(p.mechanicReminder),
+    deploy: rushSteps(d?.steps),
+    deployFollowUp: rushText(d?.followUp),
+    deployNote: rushText(d?.note),
+    tips,
+  }
+}
+
+function normRushPick(c: RawRushCard, idx: RushIndex): RushPick {
+  const kind: RushCardKind = c.type === 'auction-equipment' || c.kind === '装备' ? 'equip' : 'talent'
+  const text = rushText(c.attrs)
+  // Talents start with their series line, e.g. "整备系列\n立即获得3张整备英雄牌。"
+  const [first = '', ...rest] = text.split('\n')
+  const series = kind === 'talent' && rest.length > 0 && first.endsWith('系列') ? first : ''
+  return { ...huyaCard(kind, rushText(c.name), series ? rest.join('\n') : text, idx, c.id), series }
+}
+
+function normRushGroup(g: RawRushGroup, idx: RushIndex): RushGroup | null {
+  const heroId = (name: string | undefined) => {
+    const id = idx.hero.get(rushText(name))?.id
+    if (id === undefined && name) idx.missing.add(name)
+    return id
+  }
+  const heroes: RushHero[] = []
+  for (const u of g.units ?? []) {
+    const cell = HUYA_CELL.exec(u.cell ?? '')
+    const name = rushText(u.name)
+    if (!cell || !name) continue
+    const id = heroId(name)
+    const names = (u.equipment ?? []).map(rushText).filter(Boolean)
+    const h: RushHero = {
+      // Units that are not hero cards (e.g. 始祖熊灵, summoned by a talent) keep Huya's name and icon.
+      id: id ?? 0,
+      x: cell[1].charCodeAt(0) - 'A'.charCodeAt(0),
+      z: 4 - Number(cell[2]),
+      core: rushCore(u.core),
+      awakened: !!u.awakened,
+      equips: names.map((n) => idx.equip.get(n)?.id).filter((x): x is number => x !== undefined),
+    }
+    if (id === undefined) Object.assign(h, { name, icon: safeUrl(u.thumbnail) })
+    const extra = names.filter((n) => !idx.equip.has(n))
+    if (extra.length) h.extraEquips = extra
+    heroes.push(h)
+  }
+  if (!heroes.length) return null
+
+  const keyItems = rushText(g.keyItems)
+  const keys = new Set(keyItems.split(/[,，、;；/\s]+/).map((s) => s.replace(/[。.！!]+$/, '')).filter(Boolean))
+  const rounds = (g.auctionRounds ?? [])
+    .flatMap((r) => {
+      const round = toNum(r.round)
+      if (round <= 0 || !r.primary?.name) return []
+      const picks = [r.primary, ...(r.alternatives ?? [])].filter((c): c is RawRushCard => !!c?.name).map((c) => normRushPick(c, idx))
+      return [{ round, picks, keyPick: keys.has(picks[0]!.name) }]
+    })
+    .sort((a, b) => a.round - b.round)
+  const heroIds = (names: string[] | undefined) => (names ?? []).map(heroId).filter((x): x is number => x !== undefined)
+
+  return {
+    // "配置组1（截图匹配）" → "配置组1"
+    label: rushText(g.label).replace(/（[^）]*）$/, ''),
+    heroes,
+    thought: rushText(g.thought),
+    auctionAdvice: rushText(g.auctionAdvice),
+    keyItems,
+    rounds,
+    added: heroIds(g.changes?.heroesAdded),
+    removed: heroIds(g.changes?.heroesRemoved),
+  }
+}
+
+function normRushLineup(r: RawRushLineup, data: HuyaRushData, idx: RushIndex): RushLineup | null {
+  const groups = r.groups.map((g) => normRushGroup(g, idx)).filter((g): g is RushGroup => g !== null)
+  const first = groups[0]
+  if (!first) return null
+  const ratings: Partial<Record<RushRoom, RushRating>> = {}
+  for (const room of RUSH_ROOMS) {
+    const x = data.ratings[r.id]?.[room]
+    const grade = rushText(x?.grade)
+    if (grade) ratings[room] = { grade, score: toNum(x?.score) }
+  }
+  const l: RushLineup = {
+    id: r.id,
+    name: rushText(r.title),
+    category: rushText(r.category),
+    subject: rushText(r.subject),
+    camps: lineupCamps(first.heroes.map((h) => h.id), idx.heroById),
+    groups,
+    ratings,
+  }
+  const pack = normRushPack(r.id, data, idx)
+  if (pack) l.pack = pack
+  return l
+}
+
+/** Huya's 钻石狂潮 lineups with their opening packs. Optional: on any failure, return none. */
+async function syncRush(cards: Omit<RushIndex, 'icons' | 'missing'>): Promise<RushLineup[]> {
+  let data: HuyaRushData
+  try {
+    data = await fetchHuyaRush()
+  } catch (err) {
+    console.warn(`  ! 钻石狂潮 skipped: ${err instanceof Error ? err.message : String(err)}`)
+    return []
+  }
+  const idx: RushIndex = { ...cards, icons: data.icons, missing: new Set() }
+  const byId = new Map<string, RushLineup>()
+  for (const raw of data.lineups) {
+    if (byId.has(raw.id)) continue
+    const l = normRushLineup(raw, data, idx)
+    if (l) byId.set(l.id, l)
+  }
+  const lineups = [...byId.values()]
+  if (lineups.length < RUSH_MIN_LINEUPS) {
+    console.warn(`  ! 钻石狂潮 skipped: only ${lineups.length} usable lineups (< ${RUSH_MIN_LINEUPS}), format may have changed`)
+    return []
+  }
+  if (idx.missing.size) console.warn(`  ! 钻石狂潮: units not in official hero data (kept with Huya's icon): ${[...idx.missing].join(', ')}`)
+  const count = (f: (l: RushLineup) => boolean) => lineups.filter(f).length
+  console.log(
+    `  rush: ${lineups.length} lineups, ${count((l) => !!l.pack)} packs, ${count((l) => Object.keys(l.ratings).length > 0)} rated, ` +
+      `${count((l) => !!l.pack?.deploy.length)} deploy orders, ${data.icons.size} catalog icons`,
+  )
+  return lineups
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -683,6 +907,10 @@ async function main() {
     lord: nameIndex(lords),
   })
 
+  console.log('Fetching 钻石狂潮...')
+  const byName = <T extends { name: string }>(list: T[]) => new Map(list.map((c) => [c.name, c]))
+  const rush = await syncRush({ heroById, hero: byName(heroes), equip: byName(equips), effect: byName(effects) })
+
   // Referential integrity report (warn only; the official data occasionally lags)
   const known = new Set<number>([...heroIds, ...equips.map((e) => e.id), ...talents.map((t) => t.id), ...effects.map((e) => e.id)])
   const unknown = new Set<number>()
@@ -700,6 +928,7 @@ async function main() {
     lords: lords.length,
     lineups: lineups.length,
     huyaLineups: huyaLineups.length,
+    rushLineups: rush.length,
     cpTalents: talents.filter((t) => t.cp).length,
   }
   for (const [k, min] of Object.entries(MIN_COUNTS)) {
@@ -715,6 +944,7 @@ async function main() {
     [DATA_FILES.lords]: lords,
     [DATA_FILES.lineups]: lineups,
     [DATA_FILES.huyaLineups]: huyaLineups,
+    [DATA_FILES.rush]: rush,
     [DATA_FILES.keywords]: keywords,
   }
   const serialized = Object.entries(files).map(([name, data]) => [name, JSON.stringify(data)] as const)

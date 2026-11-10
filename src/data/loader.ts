@@ -1,4 +1,4 @@
-import type { DataMeta, EffectCard, Equip, Hero, Keyword, Lineup, Lord, Talent } from '@/types/data'
+import type { DataMeta, EffectCard, Equip, Hero, Keyword, Lineup, Lord, RushLineup, Talent } from '@/types/data'
 import { DATA_FILES } from '@/types/data'
 
 export interface GameData {
@@ -41,4 +41,10 @@ export async function loadGameData(): Promise<GameData> {
 export async function loadHuyaLineups(meta: DataMeta): Promise<Lineup[]> {
   if (!meta.counts.huyaLineups) return []
   return getJson<Lineup[]>(DATA_FILES.huyaLineups, meta.hash)
+}
+
+/** 钻石狂潮 lineups and packs from Huya; loaded after the app has started. Empty when the sync had none. */
+export async function loadRushLineups(meta: DataMeta): Promise<RushLineup[]> {
+  if (!meta.counts.rushLineups) return []
+  return getJson<RushLineup[]>(DATA_FILES.rush, meta.hash)
 }

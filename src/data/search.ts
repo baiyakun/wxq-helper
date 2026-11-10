@@ -3,15 +3,17 @@
  * pinyin-pro is loaded lazily on first use to keep the initial bundle small.
  */
 import { ref } from 'vue'
+import { categoryLabel, mainHero } from './rush'
 import type { CardKind, Db } from './store'
 
-export type SearchKind = CardKind | 'lineup'
+/** `rush`: a 钻石狂潮 lineup / opening pack */
+export type SearchKind = CardKind | 'lineup' | 'rush'
 
 export interface SearchEntry {
   kind: SearchKind
   /** card id; 0 for lineups */
   id: number
-  /** lineup key (lineups only) */
+  /** lineup key, or the 钻石狂潮 lineup id (lineups only) */
   key?: string
   name: string
   icon: string
@@ -67,6 +69,11 @@ export async function buildIndex(db: Db): Promise<SearchEntry[]> {
       const lords = l.lords.map((id) => db.lordById.get(id)?.name).filter(Boolean).join(' / ')
       return make('lineup', 0, l.name, icon, lords || l.camps.join(' · '), l.key)
     }),
+    ...db.rush.map((l) => {
+      const h = mainHero(l.groups[0])
+      const icon = h ? (h.id ? (db.heroById.get(h.id)?.avatar ?? '') : (h.icon ?? '')) : ''
+      return make('rush', 0, l.pack?.name ?? l.name, icon, `钻石狂潮 · ${categoryLabel(l.category)} · ${l.camps.join(' / ')}`, l.id)
+    }),
   ]
 }
 
@@ -86,7 +93,7 @@ export function scoreEntry(e: SearchEntry, q: string): number {
 }
 
 /** Kind priority for tie-breaking: heroes and players first. */
-const KIND_RANK: Record<SearchKind, number> = { hero: 0, lord: 1, talent: 2, equip: 3, effect: 4, lineup: 5 }
+const KIND_RANK: Record<SearchKind, number> = { hero: 0, lord: 1, talent: 2, equip: 3, effect: 4, lineup: 5, rush: 6 }
 
 export function search(index: SearchEntry[], query: string, limit = 40): SearchHit[] {
   const q = normalizeQuery(query)

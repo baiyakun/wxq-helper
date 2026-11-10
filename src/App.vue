@@ -8,15 +8,17 @@ import ToastHost from '@/components/ToastHost.vue'
 import type { IconName } from '@/components/ui'
 import { isCodexTab, lastCodexTab } from '@/composables/codexTab'
 import { refreshFavoriteSnapshots } from '@/composables/favorites'
+import { refreshRushFavoriteSnapshots } from '@/composables/rushFavorites'
 import { initData, useDataStatus, useDb } from '@/data/store'
 
 const route = useRoute()
 const router = useRouter()
-const { status, error, huyaStatus } = useDataStatus()
+const { status, error, huyaStatus, rushStatus } = useDataStatus()
 
 // Keep favorite snapshots fresh so removed lineups still show their last known content
 // (again once Huya's lineups have loaded).
 watch([status, huyaStatus], ([s]) => s === 'ready' && refreshFavoriteSnapshots(useDb()))
+watch(rushStatus, (s) => s === 'ready' && status.value === 'ready' && refreshRushFavoriteSnapshots(useDb()))
 
 function goBack() {
   // history.state.back is set by vue-router when there is an in-app previous entry
@@ -28,6 +30,7 @@ const searchOpen = ref(false)
 const nav = computed<{ to: string; match: string; label: string; icon: IconName }[]>(() => [
   { to: '/lineups', match: '/lineups', label: '阵容', icon: 'lineups' },
   { to: '/recommend', match: '/recommend', label: '推荐', icon: 'recommend' },
+  { to: '/rush', match: '/rush', label: '狂潮', icon: 'rush' },
   { to: `/codex/${isCodexTab(lastCodexTab.value) ? lastCodexTab.value : 'heroes'}`, match: '/codex', label: '图鉴', icon: 'codex' },
   { to: '/me', match: '/me', label: '我的', icon: 'me' },
 ])
@@ -127,7 +130,7 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
         </div>
         <RouterView v-else v-slot="{ Component }">
           <!-- Keep list pages alive so filters, loaded items and scroll survive opening a detail page -->
-          <KeepAlive include="LineupsView,CodexView,RecommendView">
+          <KeepAlive include="LineupsView,CodexView,RecommendView,RushView">
             <component :is="Component" />
           </KeepAlive>
         </RouterView>
@@ -136,7 +139,7 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 
     <!-- Mobile tab bar -->
     <nav class="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 backdrop-blur lg:hidden" aria-label="主导航">
-      <div class="grid h-14 grid-cols-4">
+      <div class="grid h-14 grid-cols-5">
         <RouterLink
           v-for="n in nav"
           :key="n.match"

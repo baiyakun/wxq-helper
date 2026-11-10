@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** Global search across heroes, players, talents, equips and effect cards. */
+/** Global search across heroes, players, talents, equips, effect cards and lineups (incl. 钻石狂潮). */
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDetail } from '@/composables/useDetail'
@@ -15,7 +15,7 @@ const HINTS = ['hml', '兄妹', '复生', '弈星', '倒转', 'cxe']
 const db = useDb()
 const router = useRouter()
 const { open: openDetail } = useDetail()
-const kindLabel = (k: SearchKind) => (k === 'lineup' ? '阵容' : KIND_LABEL[k])
+const kindLabel = (k: SearchKind) => (k === 'lineup' ? '阵容' : k === 'rush' ? '狂潮' : KIND_LABEL[k])
 const index = shallowRef<SearchEntry[] | null>(null)
 const query = ref('')
 const active = ref(0)
@@ -36,9 +36,9 @@ watch(open, async (v) => {
 
 watch(query, () => (active.value = 0))
 
-// Huya's lineups arrive after start-up: rebuild an index that was built without them.
+// Huya's lineups and the 钻石狂潮 data arrive after start-up: rebuild an index that was built without them.
 watch(
-  () => db.lineups,
+  () => [db.lineups, db.rush],
   async () => {
     if (index.value) index.value = await buildIndex(db)
   },
@@ -48,6 +48,8 @@ function choose(e: SearchEntry) {
   open.value = false
   if (e.kind === 'lineup') {
     if (e.key) void router.push(`/lineups/${e.key}`)
+  } else if (e.kind === 'rush') {
+    if (e.key) void router.push(`/rush/${e.key}`)
   } else {
     openDetail(e.kind, e.id)
   }
