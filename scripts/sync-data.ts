@@ -11,7 +11,7 @@
  * Plus, optionally, the lineup library of Huya's 万象棋助手 (see ./huya.ts); lineups that are
  * not in the official lists go to lineups-huya.json, and its 钻石狂潮 lineups, opening packs and
  * auction picks go to rush.json. A Huya failure never blocks the sync: Huya's raw data is then read
- * from data-snapshot/ (committed; Huya refuses connections from overseas CI runners).
+ * from data-snapshot/ (committed; Huya is sometimes unreachable, e.g. connect timeouts on CI runners).
  *
  * `npm run snapshot` (= sync --snapshot) also refreshes data-snapshot/, and fails instead of
  * falling back when Huya is unreachable. Run it from a machine that can reach Huya, then commit.
