@@ -10,10 +10,14 @@
  *            600269_oslineupbybeginner_pro_{page}.js
  * Plus, optionally, the lineup library of Huya's 万象棋助手 (see ./huya.ts); lineups that are
  * not in the official lists go to lineups-huya.json, and its 钻石狂潮 lineups, opening packs and
- * auction picks go to rush.json. A Huya failure never blocks the sync.
+ * auction picks go to rush.json. A Huya failure never blocks the sync: Huya's raw data is then read
+ * from data-snapshot/ (committed; Huya refuses connections from overseas CI runners).
+ *
+ * `npm run snapshot` (= sync --snapshot) also refreshes data-snapshot/, and fails instead of
+ * falling back when Huya is unreachable. Run it from a machine that can reach Huya, then commit.
  */
 import { createHash } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   CampName,
@@ -45,8 +49,10 @@ import type {
 } from '../src/types/data.ts'
 import { CAMPS, DATA_FILES } from '../src/types/data.ts'
 import {
+  describeError,
   fetchHuya,
   fetchHuyaRush,
+  type HuyaData,
   type HuyaRushData,
   type RawHuyaHeroRef,
   type RawHuyaLineup,
@@ -69,6 +75,8 @@ const FETCH_TIMEOUT_MS = 30_000
 const FETCH_RETRIES = 3
 const USER_AGENT = 'wxq-helper-sync/0.1 (personal research)'
 const OUT_DIR = path.resolve(import.meta.dirname, '../public/data')
+const SNAPSHOT_DIR = path.resolve(import.meta.dirname, '../data-snapshot')
+const WRITE_SNAPSHOT = process.argv.includes('--snapshot')
 
 /** Minimum counts; anything lower means the source changed shape and we must not publish. */
 const MIN_COUNTS = { heroes: 50, equips: 30, talents: 100, effects: 30, lords: 10, lineups: 50, cpTalents: 5 }
@@ -202,7 +210,69 @@ async function fetchJson<T>(url: string): Promise<Fetched<T> | null> {
       if (attempt < FETCH_RETRIES) await new Promise((r) => setTimeout(r, 1000 * attempt))
     }
   }
-  throw new Error(`Failed to fetch ${url}: ${String(lastError)}`)
+  throw new Error(`Failed to fetch ${url}: ${describeError(lastError)}`)
+}
+
+/** How a source's raw data is stored in data-snapshot/ (JSON has no Map). */
+interface SnapshotCodec<T> {
+  file: string
+  save(data: T): unknown
+  load(json: unknown): T
+}
+
+const HUYA_SNAPSHOT: SnapshotCodec<HuyaData> = {
+  file: 'huya.json',
+  save: (d) => ({ lineups: d.lineups, stats: [...d.stats] }),
+  load: (j) => {
+    const { lineups, stats } = j as { lineups: HuyaData['lineups']; stats: [string, RawHuyaStat][] }
+    return { lineups, stats: new Map(stats) }
+  },
+}
+
+const RUSH_SNAPSHOT: SnapshotCodec<HuyaRushData> = {
+  file: 'rush.json',
+  save: (d) => ({ ...d, icons: [...d.icons] }),
+  load: (j) => {
+    const d = j as Omit<HuyaRushData, 'icons'> & { icons: [string, string][] }
+    return { ...d, icons: new Map(d.icons) }
+  },
+}
+
+/**
+ * Run an optional Huya source through `use`, which must throw (before any side effect) when the
+ * data looks unusable. On any failure, the raw data last saved in data-snapshot/ is used instead.
+ * With --snapshot, a live result that `use` accepts is saved there, and failures are fatal.
+ * Returns null when neither live nor snapshot data is usable.
+ */
+async function withSnapshot<T, R>(label: string, fetcher: () => Promise<T>, codec: SnapshotCodec<T>, use: (data: T) => R): Promise<R | null> {
+  const file = path.join(SNAPSHOT_DIR, codec.file)
+  try {
+    const data = await fetcher()
+    const result = use(data)
+    if (WRITE_SNAPSHOT) {
+      await mkdir(SNAPSHOT_DIR, { recursive: true })
+      await writeFile(file, JSON.stringify({ capturedAt: new Date().toISOString(), data: codec.save(data) }))
+      console.log(`  snapshot saved: data-snapshot/${codec.file}`)
+    }
+    return result
+  } catch (err) {
+    if (WRITE_SNAPSHOT) throw err
+    console.warn(`  ! ${label}: ${describeError(err)}`)
+  }
+  let snapshot: { capturedAt?: string; data?: unknown }
+  try {
+    snapshot = JSON.parse(await readFile(file, 'utf8')) as typeof snapshot
+  } catch (err) {
+    console.warn(`  ! ${label} skipped: no usable snapshot (${describeError(err)})`)
+    return null
+  }
+  console.warn(`  ! ${label}: falling back to the snapshot captured at ${snapshot.capturedAt ?? '?'}`)
+  try {
+    return use(codec.load(snapshot.data))
+  } catch (err) {
+    console.warn(`  ! ${label} skipped: snapshot unusable (${describeError(err)})`)
+    return null
+  }
 }
 
 async function fetchCards<K extends keyof RawCardFile>(bit: number, key: K): Promise<NonNullable<RawCardFile[K]>> {
@@ -611,16 +681,14 @@ function normHuyaStats(s: RawHuyaStat): LineupStats | undefined {
 /**
  * Lineups from Huya that are not in the official lists (official data wins on the same code),
  * and Huya's match stats attached to whichever lineup they belong to.
- * Optional source: on any failure, return no lineups and leave the official ones untouched.
+ * Optional source: live data, else the snapshot; with neither, no lineups and the official ones untouched.
  */
 async function syncHuya(official: Map<string, Lineup>, cards: CardIndex): Promise<Lineup[]> {
-  let data: Awaited<ReturnType<typeof fetchHuya>>
-  try {
-    data = await fetchHuya()
-  } catch (err) {
-    console.warn(`  ! Huya skipped: ${err instanceof Error ? err.message : String(err)}`)
-    return []
-  }
+  return (await withSnapshot('Huya', fetchHuya, HUYA_SNAPSHOT, (data) => buildHuyaLineups(data, official, cards))) ?? []
+}
+
+/** Throws before touching the official lineups when the data looks unusable. */
+function buildHuyaLineups(data: HuyaData, official: Map<string, Lineup>, cards: CardIndex): Lineup[] {
   const extras = new Map<string, Lineup>()
   let skipped = 0
   for (const raw of data.lineups) {
@@ -635,8 +703,7 @@ async function syncHuya(official: Map<string, Lineup>, cards: CardIndex): Promis
     extras.set(key, l)
   }
   if (extras.size < HUYA_MIN_LINEUPS) {
-    console.warn(`  ! Huya skipped: only ${extras.size} usable lineups (< ${HUYA_MIN_LINEUPS}), format may have changed`)
-    return []
+    throw new Error(`only ${extras.size} usable lineups (< ${HUYA_MIN_LINEUPS}), format may have changed`)
   }
 
   const codeById = new Map(data.lineups.map((x) => [x.id, String(x.code).trim()]))
@@ -825,15 +892,13 @@ function normRushLineup(r: RawRushLineup, data: HuyaRushData, idx: RushIndex): R
   return l
 }
 
-/** Huya's 钻石狂潮 lineups with their opening packs. Optional: on any failure, return none. */
+/** Huya's 钻石狂潮 lineups with their opening packs. Optional: live data, else the snapshot, else none. */
 async function syncRush(cards: Omit<RushIndex, 'icons' | 'missing'>): Promise<RushLineup[]> {
-  let data: HuyaRushData
-  try {
-    data = await fetchHuyaRush()
-  } catch (err) {
-    console.warn(`  ! 钻石狂潮 skipped: ${err instanceof Error ? err.message : String(err)}`)
-    return []
-  }
+  return (await withSnapshot('钻石狂潮', fetchHuyaRush, RUSH_SNAPSHOT, (data) => buildRushLineups(data, cards))) ?? []
+}
+
+/** Throws when the data looks unusable. */
+function buildRushLineups(data: HuyaRushData, cards: Omit<RushIndex, 'icons' | 'missing'>): RushLineup[] {
   const idx: RushIndex = { ...cards, icons: data.icons, missing: new Set() }
   const byId = new Map<string, RushLineup>()
   for (const raw of data.lineups) {
@@ -843,8 +908,7 @@ async function syncRush(cards: Omit<RushIndex, 'icons' | 'missing'>): Promise<Ru
   }
   const lineups = [...byId.values()]
   if (lineups.length < RUSH_MIN_LINEUPS) {
-    console.warn(`  ! 钻石狂潮 skipped: only ${lineups.length} usable lineups (< ${RUSH_MIN_LINEUPS}), format may have changed`)
-    return []
+    throw new Error(`only ${lineups.length} usable lineups (< ${RUSH_MIN_LINEUPS}), format may have changed`)
   }
   if (idx.missing.size) console.warn(`  ! 钻石狂潮: units not in official hero data (kept with Huya's icon): ${[...idx.missing].join(', ')}`)
   const count = (f: (l: RushLineup) => boolean) => lineups.filter(f).length

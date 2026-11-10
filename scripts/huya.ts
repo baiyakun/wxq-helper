@@ -75,6 +75,25 @@ export interface HuyaData {
   stats: Map<string, RawHuyaStat>
 }
 
+/**
+ * An error with its cause chain: fetch() only says "fetch failed" and keeps the network error
+ * (e.g. UND_ERR_CONNECT_TIMEOUT, ECONNRESET, ENOTFOUND) in `cause`.
+ */
+export function describeError(err: unknown): string {
+  const parts: string[] = []
+  for (let e = err, depth = 0; e != null && depth < 4; e = e instanceof Error ? e.cause : undefined, depth++) {
+    if (!(e instanceof Error)) {
+      parts.push(String(e))
+      continue
+    }
+    const code = (e as { code?: unknown }).code
+    // AggregateError (one error per attempted address) often has an empty message.
+    const message = e.message || (e instanceof AggregateError ? e.errors.map((x) => describeError(x)).join('; ') : '')
+    parts.push(`${e.name}${typeof code === 'string' ? ` ${code}` : ''}: ${message}`)
+  }
+  return parts.join(' ← ')
+}
+
 async function fetchText(url: string): Promise<string> {
   let lastError: unknown
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
@@ -87,7 +106,7 @@ async function fetchText(url: string): Promise<string> {
       if (attempt < RETRIES) await new Promise((r) => setTimeout(r, 1000 * attempt))
     }
   }
-  throw new Error(`Failed to fetch ${url}: ${String(lastError)}`)
+  throw new Error(`Failed to fetch ${url}: ${describeError(lastError)}`)
 }
 
 const SIMPLE_ESCAPES: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', '0': '\0' }
